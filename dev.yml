@@ -8,3 +8,8 @@ env:
 up:
   - python: 3.11.13
   - uv
+  - uv_tools:
+      - ruff
+
+check:
+  style: /opt/dev/bin/dev style

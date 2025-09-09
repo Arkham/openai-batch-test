@@ -11,13 +11,11 @@ import os
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import click
 from dotenv import load_dotenv
 from openai import OpenAI
-from rich import print as rprint
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
@@ -162,14 +160,31 @@ class BatchProcessor:
                 "failed": getattr(batch.request_counts, "failed", 0),
             }
 
+        # Extract errors if batch failed
+        errors = None
+        if batch.status == "failed" and hasattr(batch, "errors") and batch.errors:
+            errors = []
+            if hasattr(batch.errors, "data"):
+                for error in batch.errors.data:
+                    errors.append(
+                        {
+                            "code": getattr(error, "code", "unknown"),
+                            "line": getattr(error, "line", None),
+                            "message": getattr(error, "message", "Unknown error"),
+                            "param": getattr(error, "param", None),
+                        }
+                    )
+
         return {
             "id": batch.id,
             "status": batch.status,
             "created_at": batch.created_at,
             "completed_at": batch.completed_at,
+            "failed_at": getattr(batch, "failed_at", None),
             "request_counts": request_counts,
             "output_file_id": batch.output_file_id,
             "error_file_id": batch.error_file_id,
+            "errors": errors,
         }
 
     def monitor_batch(self, batch_id: str, poll_interval: int = 10) -> Dict[str, Any]:
@@ -224,14 +239,24 @@ class BatchProcessor:
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="green")
 
+        # Color status based on its value
+        status_color = "green"
+        if status["status"] == "failed":
+            status_color = "red"
+        elif status["status"] in ["in_progress", "validating", "finalizing"]:
+            status_color = "yellow"
+
         table.add_row("ID", status["id"])
-        table.add_row("Status", status["status"])
+        table.add_row("Status", f"[{status_color}]{status['status']}[/{status_color}]")
         table.add_row("Created At", str(datetime.fromtimestamp(status["created_at"])))
 
         if status["completed_at"]:
             table.add_row(
                 "Completed At", str(datetime.fromtimestamp(status["completed_at"]))
             )
+
+        if status.get("failed_at"):
+            table.add_row("Failed At", str(datetime.fromtimestamp(status["failed_at"])))
 
         if status["request_counts"]:
             counts = status["request_counts"]
@@ -240,6 +265,25 @@ class BatchProcessor:
             table.add_row("Failed", str(counts.get("failed", 0)))
 
         console.print(table)
+
+        # Display errors if batch failed
+        if status["status"] == "failed" and status.get("errors"):
+            console.print("\n[bold red]Batch Errors:[/bold red]")
+            error_table = Table(show_header=True, header_style="bold red")
+            error_table.add_column("Line", style="yellow", width=6)
+            error_table.add_column("Error Code", style="cyan")
+            error_table.add_column("Message", style="white")
+            error_table.add_column("Parameter", style="dim")
+
+            for error in status["errors"]:
+                error_table.add_row(
+                    str(error.get("line", "N/A")),
+                    error.get("code", "unknown"),
+                    error.get("message", "Unknown error"),
+                    error.get("param", "N/A"),
+                )
+
+            console.print(error_table)
 
     def download_results(
         self, batch_id: str, output_dir: str = "."
@@ -377,8 +421,22 @@ def process(input_file, endpoint, window, monitor, download, output_dir):
         if monitor:
             status = processor.monitor_batch(batch_id)
 
-            # Download results if completed and requested
-            if download and status["status"] == "completed":
+            # Handle different batch statuses
+            if status["status"] == "failed":
+                console.print("\n[bold red]Batch processing failed![/bold red]")
+                if status.get("errors"):
+                    console.print(
+                        "\nPlease review the errors above and fix your batch input file."
+                    )
+                    console.print("Common issues:")
+                    console.print("  • All requests must use the same model")
+                    console.print(
+                        "  • Check for invalid parameters or malformed requests"
+                    )
+                    console.print("  • Ensure all required fields are present")
+
+            elif status["status"] == "completed" and download:
+                # Download results if completed and requested
                 output_file, error_file = processor.download_results(
                     batch_id, output_dir
                 )
@@ -386,7 +444,7 @@ def process(input_file, endpoint, window, monitor, download, output_dir):
                 if output_file:
                     # Parse and display summary
                     results = processor.parse_results(output_file)
-                    console.print(f"\n[bold]Results Summary:[/bold]")
+                    console.print("\n[bold]Results Summary:[/bold]")
                     console.print(f"Total responses: {len(results)}")
 
                     # Show first few results
@@ -400,6 +458,15 @@ def process(input_file, endpoint, window, monitor, download, output_dir):
                                 console.print(
                                     f"Content: {message.get('content', 'N/A')[:200]}..."
                                 )
+
+            elif status["status"] == "expired":
+                console.print(
+                    "\n[bold yellow]Batch expired before completion.[/bold yellow]"
+                )
+                console.print("The batch took too long to process and has expired.")
+
+            elif status["status"] == "cancelled":
+                console.print("\n[bold yellow]Batch was cancelled.[/bold yellow]")
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
