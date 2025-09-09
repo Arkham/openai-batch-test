@@ -1,0 +1,10 @@
+name: openai-batch-test
+
+type: python
+
+env:
+  OPENAI_BASE_URL: https://proxy-shopify-ai.local.shop.dev/v1
+
+up:
+  - python: 3.11.13
+  - uv
