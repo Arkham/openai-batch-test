@@ -4,6 +4,7 @@ type: python
 
 env:
   OPENAI_BASE_URL: https://proxy-shopify-ai.local.shop.dev/v1
+  # OPENAI_BASE_URL: http://proxy-shopify-ai.local.shop.dev/vendors/azureopenai-eastus/openai
 
 up:
   - python: 3.11.13

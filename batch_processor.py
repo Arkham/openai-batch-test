@@ -7,6 +7,7 @@ It supports uploading batch files, creating batch jobs, monitoring progress, and
 """
 
 import json
+import logging
 import os
 import sys
 import time
@@ -27,17 +28,65 @@ load_dotenv()
 console = Console()
 
 
+def setup_verbose_logging():
+    """Configure verbose logging for OpenAI library to show HTTP requests."""
+    # Set up logging format
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Enable debug logging for httpx (used by OpenAI client)
+    httpx_logger = logging.getLogger("httpx")
+    httpx_logger.setLevel(logging.DEBUG)
+
+    # Enable debug logging for OpenAI
+    openai_logger = logging.getLogger("openai")
+    openai_logger.setLevel(logging.DEBUG)
+
+    # Create a custom handler that highlights URLs
+    class URLHighlightHandler(logging.StreamHandler):
+        def emit(self, record):
+            # Highlight URLs in the log message
+            if "HTTP Request:" in record.getMessage():
+                console.print(f"[bold cyan]🌐 {record.getMessage()}[/bold cyan]")
+            elif "POST" in record.getMessage() or "GET" in record.getMessage():
+                console.print(f"[yellow]→ {record.getMessage()}[/yellow]")
+            else:
+                super().emit(record)
+
+    # Replace default handlers with our custom one for httpx
+    httpx_logger.handlers = []
+    httpx_logger.addHandler(URLHighlightHandler())
+
+    console.print(
+        "[green]✓[/green] Verbose logging enabled - showing all HTTP requests to OpenAI"
+    )
+    console.print("─" * 60)
+
+
 class BatchProcessor:
     """Handles OpenAI Batch API operations."""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+        verbose: bool = False,
+    ):
         """
         Initialize the BatchProcessor with OpenAI credentials.
 
         Args:
             api_key: OpenAI API key (optional, defaults to 'dummy' for proxy setups)
             base_url: OpenAI API base URL (defaults to OPENAI_BASE_URL or OPENAI_API_BASE env var)
+            verbose: Enable verbose logging to show HTTP requests and URLs
         """
+        # Enable verbose logging if requested
+        if verbose:
+            setup_verbose_logging()
+
         # For proxy setups, API key might not be needed
         self.api_key = api_key or os.getenv("OPENAI_API_KEY", "dummy")
         self.base_url = base_url or os.getenv(
@@ -45,6 +94,10 @@ class BatchProcessor:
         )
 
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+        # Log the base URL being used
+        if verbose:
+            console.print(f"[dim]Using OpenAI base URL: {self.base_url}[/dim]")
 
     def create_batch_input(
         self, requests: List[Dict[str, Any]], output_file: str
@@ -159,6 +212,8 @@ class BatchProcessor:
                 "completed": getattr(batch.request_counts, "completed", 0),
                 "failed": getattr(batch.request_counts, "failed", 0),
             }
+
+        print(batch)
 
         # Extract errors if batch failed
         errors = None
@@ -406,10 +461,16 @@ def cli():
     "--download/--no-download", default=True, help="Download results when completed"
 )
 @click.option("--output-dir", default=".", help="Directory to save results")
-def process(input_file, endpoint, window, monitor, download, output_dir):
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose logging to show HTTP requests and URLs",
+)
+def process(input_file, endpoint, window, monitor, download, output_dir, verbose):
     """Process a batch input file."""
     try:
-        processor = BatchProcessor()
+        processor = BatchProcessor(verbose=verbose)
 
         # Upload file
         file_id = processor.upload_file(input_file)
@@ -475,10 +536,16 @@ def process(input_file, endpoint, window, monitor, download, output_dir):
 
 @cli.command()
 @click.option("--limit", default=10, help="Number of batches to list")
-def list(limit):
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose logging to show HTTP requests and URLs",
+)
+def list(limit, verbose):
     """List recent batch jobs."""
     try:
-        processor = BatchProcessor()
+        processor = BatchProcessor(verbose=verbose)
         batches = processor.list_batches(limit)
 
         if not batches:
@@ -508,10 +575,16 @@ def list(limit):
 
 @cli.command()
 @click.argument("batch_id")
-def status(batch_id):
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose logging to show HTTP requests and URLs",
+)
+def status(batch_id, verbose):
     """Get status of a specific batch job."""
     try:
-        processor = BatchProcessor()
+        processor = BatchProcessor(verbose=verbose)
         status = processor.get_batch_status(batch_id)
         processor._display_batch_status(status)
 
@@ -523,10 +596,16 @@ def status(batch_id):
 @cli.command()
 @click.argument("batch_id")
 @click.option("--output-dir", default=".", help="Directory to save results")
-def download(batch_id, output_dir):
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose logging to show HTTP requests and URLs",
+)
+def download(batch_id, output_dir, verbose):
     """Download results for a completed batch."""
     try:
-        processor = BatchProcessor()
+        processor = BatchProcessor(verbose=verbose)
         output_file, error_file = processor.download_results(batch_id, output_dir)
 
         if output_file:
@@ -540,10 +619,16 @@ def download(batch_id, output_dir):
 
 @cli.command()
 @click.argument("batch_id")
-def cancel(batch_id):
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose logging to show HTTP requests and URLs",
+)
+def cancel(batch_id, verbose):
     """Cancel a batch job."""
     try:
-        processor = BatchProcessor()
+        processor = BatchProcessor(verbose=verbose)
         processor.cancel_batch(batch_id)
 
     except Exception as e:
