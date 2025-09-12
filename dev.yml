@@ -12,5 +12,9 @@ up:
   - uv_tools:
       - ruff
 
+commands:
+  test-openai: python batch_processor.py process sample_batch_input.jsonl
+  test-azure: python batch_processor.py process azure_batch_input.jsonl
+
 check:
   style: /opt/dev/bin/dev style

@@ -31,8 +31,6 @@ pyvenv.cfg
 .DS_Store
 
 # Output files
-*.jsonl
-!sample_batch_input.jsonl
 batch_*_output.jsonl
 batch_*_errors.jsonl
 results/
